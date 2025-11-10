@@ -140,6 +140,7 @@ jobs:
           rm -rf ../only-selected || true
           copy_with_deps private
           copy_with_deps apple
+          copy_with_deps telegram
           copy_with_deps category-ru || true
 
           # Build a single geosite.dat containing selected categories
