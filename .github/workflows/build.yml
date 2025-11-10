@@ -99,31 +99,69 @@ jobs:
           
       - name: Build selected geosite category dat files
         run: |
+          set -euo pipefail
           cd custom || exit 1
+
+          copy_with_deps() {
+            local list="$1"
+            local src="../community/data"
+            local dst="../only-${list}/data"
+            mkdir -p "$dst"
+            # shellcheck disable=SC2034
+            declare -A seen
+            local queue=("$list")
+            while [ ${#queue[@]} -gt 0 ]; do
+              local cur="${queue[0]}"; queue=("${queue[@]:1}")
+              if [ -n "${seen[$cur]+x}" ]; then continue; fi
+              seen[$cur]=1
+              if [ ! -f "$src/$cur" ]; then
+                echo "[warn] list '$cur' not found in $src" >&2
+                continue
+              fi
+              install -Dp "$src/$cur" "$dst/$cur"
+              # Parse and enqueue includes recursively
+              while IFS= read -r inc; do
+                [ -n "$inc" ] && queue+=("$inc")
+              done < <(awk '
+                BEGIN{IGNORECASE=1}
+                /^[[:space:]]*([0-9]+:)?include:/ {
+                  gsub(/^[[:space:]]*[0-9]+:/, "");
+                  gsub(/^[[:space:]]*include:/, "");
+                  split($0, a, "@");
+                  gsub(/#.*/, "", a[1]);
+                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", a[1]);
+                  if (a[1] != "") print a[1];
+                }
+              ' "$src/$cur")
+            done
+          }
+
           # Build geosite-private.dat
-          mkdir -p ../only-private/data
-          cp ../community/data/private ../only-private/data/private
+          copy_with_deps private
+          rm -rf ./publish || true
           go run ./ --exportlists= --datname=geosite-private.dat --datapath=../only-private/data --togfwlist=
 
-          # Build geosite-apple.dat
-          mkdir -p ../only-apple/data
-          cp ../community/data/apple ../only-apple/data/apple
+          # Build geosite-apple.dat (with all includes)
+          copy_with_deps apple
+          rm -rf ./publish || true
           go run ./ --exportlists= --datname=geosite-apple.dat --datapath=../only-apple/data --togfwlist=
 
-          # Build geosite-category-ru.dat (expects category-ru to exist in data)
-          mkdir -p ../only-category-ru/data
-          cp ../community/data/category-ru ../only-category-ru/data/category-ru
+          # Build geosite-category-ru.dat (expects category-ru in merged data)
+          copy_with_deps category-ru || true
+          rm -rf ./publish || true
           go run ./ --exportlists= --datname=geosite-category-ru.dat --datapath=../only-category-ru/data --togfwlist=
 
       - name: Collect artifacts and generate sha256
         run: |
           install -Dp ./custom/publish/geosite-private.dat ./publish/geosite-private.dat
           install -Dp ./custom/publish/geosite-apple.dat ./publish/geosite-apple.dat
-          install -Dp ./custom/publish/geosite-category-ru.dat ./publish/geosite-category-ru.dat
+          install -Dp ./custom/publish/geosite-category-ru.dat ./publish/geosite-category-ru.dat || true
 
-          for f in ./publish/*.dat; do
-            sha256sum "$f" > "$f.sha256sum"
-          done
+          if compgen -G "./publish/*.dat" > /dev/null; then
+            for f in ./publish/*.dat; do
+              sha256sum "$f" > "$f.sha256sum"
+            done
+          fi
 
       - name: Release and upload assets
         uses: svenstaro/upload-release-action@v2
